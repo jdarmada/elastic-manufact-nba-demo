@@ -1,0 +1,20 @@
+name: Refresh NBA articles
+
+on:
+  schedule:
+    - cron: "15 */2 * * *"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Ingest new articles
+        working-directory: ingest
+        env:
+          ES_URL: ${{ secrets.ES_URL }}
+          ES_API_KEY: ${{ secrets.ES_API_KEY }}
+        run: uv run --python 3.12 nba-ingest articles
