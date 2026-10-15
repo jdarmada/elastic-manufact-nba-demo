@@ -69,12 +69,14 @@ Deploys from the GitHub repo set as `origin` (install the Manufact GitHub App on
 
 ## For attendees: connect & try it
 
+**MCP URL:** `https://fast-steel-cod8z.run.mcp-use.com/mcp`
+
 **Claude (web/desktop):** Settings → Connectors → Add custom connector → paste the MCP URL.
 **ChatGPT:** Settings → Apps & Connectors → Advanced → Developer mode → Create → paste the MCP URL.
 **Cursor / VS Code / Claude Code:**
 
 ```json
-{ "mcpServers": { "nba-compare": { "url": "https://<your-manufact-url>/mcp" } } }
+{ "mcpServers": { "nba-compare": { "url": "https://fast-steel-cod8z.run.mcp-use.com/mcp" } } }
 ```
 
 Prompts to try:
