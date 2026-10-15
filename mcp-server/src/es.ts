@@ -47,6 +47,11 @@ const PROFILE_FIELDS = [
   "is_active", "first_season", "last_season",
 ];
 
+const NBA_TEAMS = [
+  "ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC", "LAL", "MEM",
+  "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS", "TOR", "UTA", "WAS",
+];
+
 const NICKNAMES: Record<string, string> = {
   kd: "Kevin Durant", sga: "Shai Gilgeous-Alexander", cp3: "Chris Paul", ad: "Anthony Davis",
   "the brow": "Anthony Davis", "king james": "LeBron James", bron: "LeBron James", "greek freak": "Giannis Antetokounmpo",
@@ -54,7 +59,10 @@ const NICKNAMES: Record<string, string> = {
   steph: "Stephen Curry", dame: "Damian Lillard", "the beard": "James Harden", kat: "Karl-Anthony Towns",
   pg13: "Paul George", "the process": "Joel Embiid", "black mamba": "Kobe Bryant", mj: "Michael Jordan",
   shaq: "Shaquille O'Neal", "the answer": "Allen Iverson", ant: "Anthony Edwards", "ant-man": "Anthony Edwards",
-  timmy: "Tim Duncan", "the mailman": "Karl Malone", "melo": "Carmelo Anthony", jimmy: "Jimmy Butler",
+  timmy: "Tim Duncan", luka: "Luka Doncic", shai: "Shai Gilgeous-Alexander", ja: "Ja Morant",
+  zion: "Zion Williamson", trae: "Trae Young", kawhi: "Kawhi Leonard", kyrie: "Kyrie Irving",
+  tatum: "Jayson Tatum", embiid: "Joel Embiid", jokic: "Nikola Jokic", flagg: "Cooper Flagg",
+  kobe: "Kobe Bryant", jordan: "Michael Jordan", lebron: "LeBron James", curry: "Stephen Curry", "the mailman": "Karl Malone", "melo": "Carmelo Anthony", jimmy: "Jimmy Butler",
 };
 
 /** Fuzzy name search; players with stats on file and active players rank higher. */
@@ -92,9 +100,12 @@ export async function findPlayers(rawName: string, size = 5): Promise<PlayerProf
             },
           },
         ],
+        // balldontlie also lists international players (e.g. a second "Luka Doncic" on Real Madrid);
+        // these boosts outweigh text-score differences so NBA players with stats always win.
         should: [
-          { exists: { field: "last_season", boost: 1.5 } },
-          { term: { is_active: { value: true, boost: 0.5 } } },
+          { constant_score: { filter: { exists: { field: "last_season" } }, boost: 30 } },
+          { constant_score: { filter: { terms: { team_abbreviation: NBA_TEAMS } }, boost: 10 } },
+          { constant_score: { filter: { term: { is_active: true } }, boost: 2 } },
         ],
       },
     },
