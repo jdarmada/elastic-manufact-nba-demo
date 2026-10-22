@@ -72,6 +72,20 @@ cd ingest && uv run nba-ingest agent-builder   # create/update tools + agent (id
 
 An **NBA Analyst** agent uses all eight. Chat with it in Kibana under **Agent Builder**, or connect any MCP client to Agent Builder's built-in endpoint `https://<project>.kb.<region>.elastic.cloud/api/agent_builder/mcp` (header `Authorization: ApiKey <key>`). The tools appear there as `nba_season_scoring_leaders`, and so on.
 
+### Agent Builder tools on the public endpoint
+
+The mcp-use server proxies Agent Builder's MCP endpoint with `server.proxy()` (`mcp-server/src/agentBuilder.ts`), so a curated set of Agent Builder tools is served publicly through Manufact as `elastic_nba_team_defense_rankings`, `elastic_nba_big_scoring_games`, `elastic_nba_team_injury_report` and `elastic_nba_team_upcoming_games`. Edit those tools in Kibana and the public endpoint picks up the change; no redeploy is needed.
+
+The upstream connection is wrapped in an allow-list: Agent Builder's built-in platform tools (connectors, workflows, …) are never listed or callable, and resources and prompts aren't forwarded. Configure it with these server env vars:
+
+```
+AGENT_BUILDER_MCP_URL=https://<project>.kb.<region>.elastic.cloud/api/agent_builder/mcp
+AGENT_BUILDER_API_KEY=<key with read on nba-* + Kibana feature_agentBuilder.read>
+AGENT_BUILDER_TOOLS=nba_team_defense_rankings,nba_big_scoring_games,...   # optional override
+```
+
+If they're unset, or Kibana is unreachable at startup, the proxy is skipped and the native tools keep working.
+
 In the mcp-use server, `league_leaders` and `player_vs_team` also run on ES|QL (`esql()` helper in `mcp-server/src/es.ts`). The other tools use Query DSL aggregations and retrievers.
 
 ## Run the MCP server locally

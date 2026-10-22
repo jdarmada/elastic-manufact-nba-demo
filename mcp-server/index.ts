@@ -21,6 +21,7 @@ import {
   projectNextGame,
   upcomingGames,
 } from "./src/predict.js";
+import { mountAgentBuilderTools } from "./src/agentBuilder.js";
 
 const server = new MCPServer({
   name: "nba-player-compare",
@@ -571,5 +572,8 @@ server.prompt(
     ],
   }),
 );
+
+// Elastic Agent Builder ES|QL tools, proxied from Kibana's built-in MCP endpoint.
+await mountAgentBuilderTools(server);
 
 export default server;
