@@ -2,7 +2,7 @@
  * Elasticsearch queries behind the MCP tools: aggregations over season averages
  * and box scores, plus hybrid (BM25 + semantic_text, fused with RRF) article search.
  */
-import { es, INDEX, type PlayerProfile } from "./es.js";
+import { es, esql, INDEX, type PlayerProfile } from "./es.js";
 
 type SeasonType = "regular" | "playoffs";
 // Aggregation responses are deeply dynamic; keep them loosely typed.
@@ -445,39 +445,32 @@ export type SeasonStat =
   | "ts_pct" | "efg_pct" | "usg_pct" | "net_rating" | "off_rating" | "def_rating" | "pie" | "plus_minus" | "dd2" | "td3";
 
 // Volume qualifiers so efficiency leaderboards aren't won by low-usage players.
-const QUALIFIERS: Partial<Record<SeasonStat, object>> = {
-  fg_pct: { range: { fga: { gte: 5 } } },
-  ts_pct: { range: { fga: { gte: 8 } } },
-  efg_pct: { range: { fga: { gte: 8 } } },
-  fg3_pct: { range: { fg3a: { gte: 3 } } },
-  ft_pct: { range: { fta: { gte: 2 } } },
+const QUALIFIERS: Partial<Record<SeasonStat, string>> = {
+  fg_pct: "fga >= 5",
+  ts_pct: "fga >= 8",
+  efg_pct: "fga >= 8",
+  fg3_pct: "fg3a >= 3",
+  ft_pct: "fta >= 2",
 };
 
+/** ES|QL leaderboard. `stat` is a validated enum value, so interpolating it as a column name is safe. */
 export async function leagueLeaders(stat: SeasonStat, season: number, seasonType: SeasonType, minGames: number, minMinutes: number, size: number) {
   const ascending = stat === "def_rating" || stat === "tov";
   const qualifier = QUALIFIERS[stat];
-  const res = await es().search({
-    index: INDEX.seasons,
-    size,
-    sort: [{ [stat]: { order: ascending ? "asc" : "desc", missing: "_last" } }],
-    _source: ["player_name", "team_abbreviation", "gp", stat],
-    query: {
-      bool: {
-        filter: [
-          { term: { season } },
-          { term: { season_type: seasonType } },
-          { range: { gp: { gte: minGames } } },
-          { range: { min: { gte: minMinutes } } },
-          { exists: { field: stat } },
-          ...(qualifier ? [qualifier] : []),
-        ],
-      },
-    },
-  });
-  return res.hits.hits.map((h, i) => {
-    const s = h._source as Agg;
-    return { rank: i + 1, player: s.player_name, team: s.team_abbreviation, gp: s.gp, [stat]: round(s[stat], 3) };
-  });
+  const query = [
+    `FROM ${INDEX.seasons}`,
+    `| WHERE season == ?season AND season_type == ?season_type AND gp >= ?min_games AND min >= ?min_minutes AND ${stat} IS NOT NULL${qualifier ? ` AND ${qualifier}` : ""}`,
+    `| SORT ${stat} ${ascending ? "ASC" : "DESC"}`,
+    `| LIMIT ${Math.trunc(size)}`,
+    `| KEEP player_name, team_abbreviation, gp, ${stat}`,
+  ].join("\n");
+  const rows = await esql<Agg>(query, [
+    { season },
+    { season_type: seasonType },
+    { min_games: minGames },
+    { min_minutes: minMinutes },
+  ]);
+  return rows.map((s, i) => ({ rank: i + 1, player: s.player_name, team: s.team_abbreviation, gp: s.gp, [stat]: round(s[stat], 3) }));
 }
 
 // --------------------------------------------------------------- articles

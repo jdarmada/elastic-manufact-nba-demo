@@ -32,6 +32,8 @@ def main() -> None:
     p = sub.add_parser("daily", help="Refresh rosters, schedule, injuries, new box scores and articles")
     p.add_argument("--no-articles", action="store_true")
 
+    sub.add_parser("agent-builder", help="Create/update ES|QL tools and the NBA Analyst agent in Agent Builder")
+
     sub.add_parser("backfill-teams", help="Fill season-stat teams from box scores (runs after game-stats)")
 
     p = sub.add_parser("articles", help="Recent NBA news from RSS feeds")
@@ -56,6 +58,11 @@ def main() -> None:
                            {"season": args.season, "season_type": "regular", "type": stat_type, "per_page": 1})
             print(f"--- {stat_type} ---")
             print(json.dumps(body.get("data", [])[:1], indent=2))
+        return
+
+    if args.cmd == "agent-builder":
+        from .agent_builder import setup_agent_builder
+        setup_agent_builder()
         return
 
     es = client()

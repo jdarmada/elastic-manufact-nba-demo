@@ -142,3 +142,14 @@ export async function resolvePlayer(nameOrId: string): Promise<PlayerProfile> {
   resolved.set(key, player);
   return player;
 }
+
+export type EsqlParam = Record<string, string | number | boolean>;
+
+/** Run an ES|QL query with named params (?name) and return rows as objects. */
+export async function esql<T = Record<string, unknown>>(query: string, params: EsqlParam[] = []): Promise<T[]> {
+  const res = (await es().esql.query({ query, params: params as any })) as unknown as {
+    columns: { name: string }[];
+    values: unknown[][];
+  };
+  return res.values.map((row) => Object.fromEntries(res.columns.map((c, i) => [c.name, row[i]])) as T);
+}

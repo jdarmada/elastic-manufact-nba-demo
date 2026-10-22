@@ -18,6 +18,8 @@ def _require(name: str) -> str:
 
 ES_URL = os.getenv("ES_URL", "")
 ES_API_KEY = os.getenv("ES_API_KEY", "")
+# Optional; derived from ES_URL (".es." -> ".kb.") when unset
+KIBANA_URL = os.getenv("KIBANA_URL", "")
 BALLDONTLIE_API_KEY = os.getenv("BALLDONTLIE_API_KEY", "")
 
 INDEX_PREFIX = os.getenv("INDEX_PREFIX", "nba")

@@ -3,7 +3,7 @@
  * season averages, history vs the opponent, opponent defense, venue and rest.
  * Deliberately simple and transparent so the model can explain every component.
  */
-import { es, INDEX, type PlayerProfile } from "./es.js";
+import { es, esql, INDEX, type EsqlParam, type PlayerProfile } from "./es.js";
 
 // Aggregation/search responses are dynamic; keep them loosely typed.
 type Any = any;
@@ -291,22 +291,43 @@ export function probabilityAOverB(a: Projection, b: Projection): number | null {
 
 // --------------------------------------------------------- vs-team summary
 
+/** Player vs a specific team, computed with ES|QL STATS instead of fetching every game. */
 export async function playerVsTeam(p: PlayerProfile, team: string, seasonsBack: number, limit: number) {
-  const games = await gamesVsTeam(p, team, seasonsBack, 200);
-  if (!games.length) return { player: p.full_name, opponent: team.toUpperCase(), games: 0, note: "No games vs this team in the box-score window." };
-  const avg = (f: string) => round(mean(games.map((g) => g[f] ?? 0)));
-  const sum = (f: string) => games.reduce((a, g) => a + (g[f] ?? 0), 0);
-  const recent = await recentGames(p, 82);
-  const overall = (f: string) => round(mean(recent.map((g) => g[f] ?? 0)));
+  const opponent = team.toUpperCase();
+  const params: EsqlParam[] = [{ player_id: p.player_id }, { team: opponent }, { from_season: currentSeason() - seasonsBack + 1 }];
+  const where = `FROM ${INDEX.games}\n| WHERE player_id == ?player_id AND opponent_abbreviation == ?team AND season >= ?from_season`;
+  const logFields = "game_date, season, season_type, team_abbreviation, opponent_abbreviation, is_home, result, min, pts, reb, ast, fg3m, fgm, fga, team_score, opp_score";
+
+  const [[summary], best, log, [recent]] = await Promise.all([
+    esql<Any>(
+      `${where}
+| STATS games = COUNT(*), wins = SUM(CASE(result == "W", 1, 0)), losses = SUM(CASE(result == "L", 1, 0)),
+        pts = AVG(pts), reb = AVG(reb), ast = AVG(ast), fg3m = AVG(fg3m), stl = AVG(stl), blk = AVG(blk), min = AVG(min),
+        fgm = SUM(fgm), fga = SUM(fga)
+| EVAL fg_pct = ROUND(TO_DOUBLE(fgm) / fga, 3)`,
+      params,
+    ),
+    esql<Any>(`${where}\n| SORT pts DESC, game_date DESC\n| LIMIT 1\n| KEEP ${logFields}`, params),
+    limit > 0 ? esql<Any>(`${where}\n| SORT game_date DESC\n| LIMIT ${Math.trunc(limit)}\n| KEEP ${logFields}`, params) : Promise.resolve([]),
+    esql<Any>(
+      `FROM ${INDEX.games}\n| WHERE player_id == ?player_id AND season >= ?from_season\n| STATS pts = AVG(pts), reb = AVG(reb), ast = AVG(ast)`,
+      [{ player_id: p.player_id }, { from_season: currentSeason() - 1 }],
+    ),
+  ]);
+
+  if (!summary?.games) return { player: p.full_name, opponent, games: 0, note: "No games vs this team in the box-score window." };
   return {
     player: p.full_name,
-    opponent: team.toUpperCase(),
-    games: games.length,
-    record: `${games.filter((g) => g.result === "W").length}-${games.filter((g) => g.result === "L").length}`,
-    averages: { pts: avg("pts"), reb: avg("reb"), ast: avg("ast"), fg3m: avg("fg3m"), stl: avg("stl"), blk: avg("blk"), min: avg("min") },
-    fg_pct: sum("fga") ? round(sum("fgm") / sum("fga"), 3) : null,
-    compared_to_recent_overall: { pts: overall("pts"), reb: overall("reb"), ast: overall("ast") },
-    best_game: games.reduce((best, g) => (g.pts > (best?.pts ?? -1) ? g : best), null as Any),
-    game_log: games.slice(0, limit),
+    opponent,
+    games: summary.games,
+    record: `${summary.wins}-${summary.losses}`,
+    averages: {
+      pts: round(summary.pts), reb: round(summary.reb), ast: round(summary.ast), fg3m: round(summary.fg3m),
+      stl: round(summary.stl), blk: round(summary.blk), min: round(summary.min),
+    },
+    fg_pct: summary.fg_pct ?? null,
+    compared_to_recent_overall: { pts: round(recent?.pts), reb: round(recent?.reb), ast: round(recent?.ast) },
+    best_game: best[0] ?? null,
+    game_log: log,
   };
 }

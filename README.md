@@ -51,6 +51,29 @@ The MCP server is public, so give it a key that can only read `nba-*`. An API ke
 { "nba_readonly": { "indices": [ { "names": ["nba-*"], "privileges": ["read", "view_index_metadata"] } ] } }
 ```
 
+## Elastic Agent Builder (ES|QL tools + built-in MCP endpoint)
+
+The same data is also exposed natively through **Agent Builder** in Kibana, defined as code in `ingest/nba_ingest/agent_builder.py`:
+
+```bash
+cd ingest && uv run nba-ingest agent-builder   # create/update tools + agent (idempotent)
+```
+
+| Tool | Type | What it does |
+|---|---|---|
+| `nba.season_scoring_leaders` | ES\|QL | Top-10 scorers for a season |
+| `nba.player_career_averages` | ES\|QL | Career per-game numbers via `STATS … BY` over season totals |
+| `nba.player_vs_team` | ES\|QL | Season-by-season splits vs one opponent |
+| `nba.big_scoring_games` | ES\|QL | Most N-point games since a season |
+| `nba.team_defense_rankings` | ES\|QL | Points allowed per game, `COUNT_DISTINCT(game_id)` |
+| `nba.team_upcoming_games` | ES\|QL | Next 5 games from `nba-schedule` |
+| `nba.team_injury_report` | ES\|QL | Current injuries from `nba-injuries` |
+| `nba.news_search` | index search | Semantic search over `nba-articles` |
+
+An **NBA Analyst** agent uses all eight. Chat with it in Kibana under **Agent Builder**, or connect any MCP client to Agent Builder's built-in endpoint `https://<project>.kb.<region>.elastic.cloud/api/agent_builder/mcp` (header `Authorization: ApiKey <key>`). The tools appear there as `nba_season_scoring_leaders`, and so on.
+
+In the mcp-use server, `league_leaders` and `player_vs_team` also run on ES|QL (`esql()` helper in `mcp-server/src/es.ts`). The other tools use Query DSL aggregations and retrievers.
+
 ## Run the MCP server locally
 
 ```bash
