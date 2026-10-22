@@ -1,17 +1,26 @@
-name: Refresh NBA articles
+name: Refresh NBA data
 
 on:
   schedule:
-    - cron: "15 */2 * * *"
+    - cron: "15 */2 * * *" # articles every 2 hours
+    - cron: "0 13 * * *" # schedule, injuries, rosters, box scores daily (13:00 UTC, after overnight games)
   workflow_dispatch:
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Daily refresh
+        if: github.event.schedule == '0 13 * * *' || github.event_name == 'workflow_dispatch'
+        working-directory: ingest
+        env:
+          ES_URL: ${{ secrets.ES_URL }}
+          ES_API_KEY: ${{ secrets.ES_API_KEY }}
+          BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
+        run: uv run --python 3.12 nba-ingest daily --no-articles
       - name: Ingest new articles
         working-directory: ingest
         env:

@@ -25,6 +25,8 @@ PLAYERS_INDEX = f"{INDEX_PREFIX}-players"
 SEASON_STATS_INDEX = f"{INDEX_PREFIX}-season-stats"
 GAME_STATS_INDEX = f"{INDEX_PREFIX}-game-stats"
 ARTICLES_INDEX = f"{INDEX_PREFIX}-articles"
+SCHEDULE_INDEX = f"{INDEX_PREFIX}-schedule"
+INJURIES_INDEX = f"{INDEX_PREFIX}-injuries"
 
 # Leave empty to use the cluster's default semantic_text endpoint (ELSER on Serverless/EIS).
 SEMANTIC_INFERENCE_ID = os.getenv("SEMANTIC_INFERENCE_ID", "")

@@ -244,13 +244,18 @@ def _game_doc(s: dict) -> dict | None:
     return doc
 
 
-def ingest_game_stats(es: Elasticsearch, api: BallDontLie, start: int, end: int) -> None:
+def ingest_game_stats(es: Elasticsearch, api: BallDontLie, start: int, end: int,
+                      start_date: str | None = None) -> None:
+    """Box scores for seasons start..end; with start_date, only games on/after that date."""
     teams = {t["id"]: t for t in api.get("/teams").get("data", [])}
 
     def actions() -> Iterator[dict]:
         for season in range(start, end + 1):
             n = 0
-            for s in api.paginate("/stats", {"seasons[]": [season]}):
+            params: dict[str, Any] = {"seasons[]": [season]}
+            if start_date:
+                params["start_date"] = start_date
+            for s in api.paginate("/stats", params):
                 game = s.get("game") or {}
                 # Some payloads only carry team ids on the game object; hydrate them.
                 for side in ("home", "visitor"):
@@ -263,9 +268,14 @@ def ingest_game_stats(es: Elasticsearch, api: BallDontLie, start: int, end: int)
                 yield {"_index": config.GAME_STATS_INDEX, "_id": f"{doc['game_id']}-{doc['player_id']}", "_source": doc}
             print(f"  {season_label(season)}: {n} player-games")
 
-    print(f"Fetching box scores {start}..{end}...")
+    print(f"Fetching box scores {start}..{end}{f' since {start_date}' if start_date else ''}...")
     bulk(es, actions(), "game stats")
     backfill_season_teams(es)
+
+
+def latest_game_date(es: Elasticsearch) -> str | None:
+    resp = es.search(index=config.GAME_STATS_INDEX, size=0, aggs={"last": {"max": {"field": "game_date"}}})
+    return resp["aggregations"]["last"].get("value_as_string")
 
 
 def backfill_season_teams(es: Elasticsearch) -> None:
@@ -297,4 +307,4 @@ def backfill_season_teams(es: Elasticsearch) -> None:
                 return
 
     # Missing season docs (e.g. play-in only) show up as 404s; that's expected.
-    bulk(es, updates(), "season team backfill")
+    bulk(es, updates(), "season team backfill", ignore_missing=True)

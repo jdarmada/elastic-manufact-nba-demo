@@ -6,7 +6,8 @@ Compare any two NBA players from an AI assistant. Stats and news live in **Elast
 balldontlie API ─┐                                    ┌─ compare_players (+ React card)
                  ├─ ingest/ (Python) ─► Elasticsearch ─┤  game_splits · milestone_games · head_to_head
 NBA RSS feeds ───┘   semantic_text        Serverless   │  player_seasons · league_leaders · find_player
-                                                        └─ search_nba_news · compare_player_news (hybrid RRF)
+                                                        ├─ search_nba_news · compare_player_news (hybrid RRF)
+                                                        └─ predict_next_game (+ card) · upcoming_schedule · player_vs_team
                                                                ▲
                                     mcp-server/ (mcp-use, TypeScript) ── deployed on Manufact ── attendees
 ```
@@ -18,6 +19,8 @@ NBA RSS feeds ───┘   semantic_text        Serverless   │  player_seaso
 | `nba-players` | balldontlie `/players` | ~7.5k | fuzzy name resolution (`search_as_you_type`, fuzzy + prefix) |
 | `nba-season-stats` | balldontlie `/season_averages/general` base + advanced, 1996-97 → now, regular + playoffs | ~20k | career aggregations (`sum`, `weighted_avg`, `top_hits`), leaderboards |
 | `nba-game-stats` | balldontlie `/stats` box scores, last 10 seasons | ~280k | splits (terms / runtime-field month), milestones (`filter` aggs), head-to-head (`terms` on `game_id` with `min_doc_count: 2`) |
+| `nba-schedule` | balldontlie `/games`, current season | ~1.2k | next game per team, opponent, home/away, rest days |
+| `nba-injuries` | balldontlie `/player_injuries` | current report | flags players listed Out / Day-To-Day in projections |
 | `nba-articles` | ESPN, CBS, Yahoo, RealGM, Sporting News, SB Nation + 19 team blogs (RSS + full text) | grows on each run | hybrid search: BM25 `multi_match` + `semantic` on a `semantic_text` field, fused with an `rrf` retriever; semantic highlighting |
 
 Articles are tagged at ingest with `players_mentioned` / `teams_mentioned` so searches can be filtered to a player and coverage can be aggregated. `semantic_text` uses the project's default inference endpoint (currently `.jina-embeddings-v5-text-small` via EIS); set `SEMANTIC_INFERENCE_ID` to pin another (e.g. `.elser-2-elastic`).
@@ -36,7 +39,9 @@ uv run nba-ingest game-stats            # last 10 seasons, ~60-90 min; backfills
 uv run nba-ingest articles              # re-run any time; only new URLs are fetched + embedded
 ```
 
-Other commands: `nba-ingest probe` (print a raw balldontlie row), `nba-ingest backfill-teams`, `nba-ingest all`.
+Keep it current during the season with `uv run nba-ingest daily` (rosters, schedule, injuries, current-season averages, new box scores, articles).
+
+Other commands: `nba-ingest schedule`, `nba-ingest injuries`, `nba-ingest probe` (print a raw balldontlie row), `nba-ingest backfill-teams`, `nba-ingest all`.
 
 ### Read-only key for the public MCP server
 
@@ -88,11 +93,25 @@ Prompts to try:
 - *How does Luka play at home vs on the road? Compare to SGA.*
 - *What's the latest injury news on Joel Embiid?*
 - *Which players are getting more media buzz right now, Wembanyama or Cooper Flagg? Any trade rumors?*
+- *Who will score more in their next game, LeBron or Steph?* (renders the projection card)
+- *Who'll have more rebounds next game, Jokic or Wemby?*
+- *What does Jokic's upcoming schedule look like? Any soft matchups?*
+- *How does Steph play against Memphis?*
 - Use the **scouting_report** prompt for a full multi-tool breakdown.
 
-## Keep news fresh
+## Next-game projections
 
-`.github/workflows/refresh-articles.yml` runs `nba-ingest articles` every 2 hours (add `ES_URL` and `ES_API_KEY` repo secrets). Or run it from cron on any machine.
+`predict_next_game` is a transparent heuristic, not a trained model:
+
+- **Base:** 45% last-10 average + 55% season average (early in the season the small current sample is shrunk toward last season), blended with up to 20% history vs the opponent (last 4 seasons).
+- **Opponent:** × half of the opponent's stat-allowed-per-game vs league average (current + previous regular season, via a `terms` + `cardinality` aggregation over box scores).
+- **Venue & rest:** × half the player's home/away split; × 0.97 on a back-to-back.
+- **Range & odds:** ±1 standard deviation of the last 30 games; P(A > B) from a normal approximation.
+- **Injuries:** players listed Out are flagged and excluded from the head-to-head probability.
+
+## Keep data fresh
+
+`.github/workflows/refresh-articles.yml` runs `nba-ingest articles` every 2 hours and `nba-ingest daily --no-articles` every morning (add `ES_URL`, `ES_API_KEY` and `BALLDONTLIE_API_KEY` repo secrets). Or run them from cron on any machine.
 
 ## Notes & limits
 

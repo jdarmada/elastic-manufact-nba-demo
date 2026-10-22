@@ -7,6 +7,8 @@ export const INDEX = {
   seasons: `${prefix}-season-stats`,
   games: `${prefix}-game-stats`,
   articles: `${prefix}-articles`,
+  schedule: `${prefix}-schedule`,
+  injuries: `${prefix}-injuries`,
 };
 
 let client: Client | undefined;

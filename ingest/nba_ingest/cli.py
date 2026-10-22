@@ -24,6 +24,14 @@ def main() -> None:
     p.add_argument("--start", type=int, default=cur - 9)
     p.add_argument("--end", type=int, default=cur)
 
+    p = sub.add_parser("schedule", help="Season schedule incl. upcoming games")
+    p.add_argument("--season", type=int, default=cur)
+
+    sub.add_parser("injuries", help="Current injury report")
+
+    p = sub.add_parser("daily", help="Refresh rosters, schedule, injuries, new box scores and articles")
+    p.add_argument("--no-articles", action="store_true")
+
     sub.add_parser("backfill-teams", help="Fill season-stat teams from box scores (runs after game-stats)")
 
     p = sub.add_parser("articles", help="Recent NBA news from RSS feeds")
@@ -77,8 +85,31 @@ def main() -> None:
     from .bdl import BallDontLie
     from .stats import backfill_season_teams, ingest_game_stats, ingest_players, ingest_season_stats
 
+    if args.cmd in ("schedule", "injuries", "daily"):
+        from .schedule import ingest_injuries, ingest_schedule
+        create_indices(es)  # adds any new indices (e.g. schedule/injuries) without touching existing ones
+
     if args.cmd == "backfill-teams":
         backfill_season_teams(es)
+    elif args.cmd == "schedule":
+        ingest_schedule(es, BallDontLie(), args.season)
+    elif args.cmd == "injuries":
+        ingest_injuries(es, BallDontLie())
+    elif args.cmd == "daily":
+        from datetime import date, timedelta
+        from .stats import latest_game_date
+        api = BallDontLie()
+        ingest_players(es, api)  # picks up trades / signings
+        ingest_schedule(es, api, cur)
+        ingest_injuries(es, api)
+        ingest_season_stats(es, api, cur, cur, ["regular", "playoffs"])
+        last = latest_game_date(es)
+        # Re-pull a couple of days back so late stat corrections land too.
+        since = (date.fromisoformat(last[:10]) - timedelta(days=2)).isoformat() if last else None
+        ingest_game_stats(es, api, cur - 1 if since and since < f"{cur}-10-01" else cur, cur, start_date=since)
+        if not args.no_articles:
+            from .articles import ingest_articles
+            ingest_articles(es)
     elif args.cmd == "players":
         ingest_players(es, BallDontLie())
     elif args.cmd == "season-stats":

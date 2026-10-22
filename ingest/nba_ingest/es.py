@@ -120,6 +120,35 @@ def mappings() -> dict[str, dict]:
                 "teams_mentioned": {"type": "keyword"},
             }
         },
+        config.SCHEDULE_INDEX: {
+            "properties": {
+                "game_id": {"type": "integer"},
+                "date": {"type": "date"},
+                "datetime": {"type": "date"},
+                "season": {"type": "integer"},
+                "status_state": {"type": "keyword"},
+                "postseason": {"type": "boolean"},
+                "postponed": {"type": "boolean"},
+                "home_team": {"type": "keyword"},
+                "home_team_name": {"type": "keyword"},
+                "visitor_team": {"type": "keyword"},
+                "visitor_team_name": {"type": "keyword"},
+                "teams": {"type": "keyword"},
+                "home_team_score": {"type": "integer"},
+                "visitor_team_score": {"type": "integer"},
+            }
+        },
+        config.INJURIES_INDEX: {
+            "properties": {
+                "player_id": {"type": "integer"},
+                "player_name": NAME_FIELD,
+                "team_abbreviation": {"type": "keyword"},
+                "status": {"type": "keyword"},
+                "return_date": {"type": "date", "ignore_malformed": True},
+                "description": {"type": "text", "analyzer": "english"},
+                "updated_at": {"type": "date"},
+            }
+        },
     }
 
 
@@ -143,16 +172,20 @@ def create_indices(es: Elasticsearch, recreate: bool = False, only: list[str] | 
         print(f"  created {index}")
 
 
-def bulk(es: Elasticsearch, actions: Iterable[dict], label: str, chunk_size: int = 500) -> int:
-    ok, errors = 0, 0
+def bulk(es: Elasticsearch, actions: Iterable[dict], label: str, chunk_size: int = 500,
+         ignore_missing: bool = False) -> int:
+    ok, errors, missing = 0, 0, 0
     for success, info in helpers.streaming_bulk(
         es, actions, chunk_size=chunk_size, raise_on_error=False, raise_on_exception=False, max_retries=3
     ):
         if success:
             ok += 1
+        elif ignore_missing and next(iter(info.values()), {}).get("status") == 404:
+            missing += 1
         else:
             errors += 1
             if errors <= 5:
                 print(f"  ! {label} bulk error: {info}")
-    print(f"  {label}: indexed {ok} docs ({errors} errors)")
+    skipped = f", {missing} skipped (no matching doc)" if missing else ""
+    print(f"  {label}: indexed {ok} docs ({errors} errors{skipped})")
     return ok

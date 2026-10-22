@@ -12,6 +12,15 @@ import {
   playerSeasons,
   searchArticles,
 } from "./src/queries.js";
+import {
+  currentTeam,
+  defenseTable,
+  gamesVsTeam,
+  playerVsTeam,
+  probabilityAOverB,
+  projectNextGame,
+  upcomingGames,
+} from "./src/predict.js";
 
 const server = new MCPServer({
   name: "nba-player-compare",
@@ -25,6 +34,7 @@ const server = new MCPServer({
     "Use compare_player_news or search_nba_news for recent storylines (injuries, trades, form); cite article titles and URLs.",
     "Season averages cover 1996-97 onward; box scores cover the most recent seasons loaded.",
     "Seasons are identified by start year (2024 = the 2024-25 season).",
+    "For 'who will score more next game' questions use predict_next_game; present projections as estimates, not guarantees or betting advice.",
   ].join(" "),
   websiteUrl: "https://www.elastic.co",
   icons: [{ src: "icon.svg", mimeType: "image/svg+xml", sizes: ["512x512"] }],
@@ -374,6 +384,164 @@ export const comparePlayerNews = server.tool(
     try {
       const [a, b] = await Promise.all([resolvePlayer(player_a), resolvePlayer(player_b)]);
       return json(await newsComparison(a, b, topic, days, limit));
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+// ------------------------------------------------------------- predictions
+
+const projStat = z
+  .enum(["pts", "reb", "ast", "fg3m", "stl", "blk", "pra"])
+  .default("pts")
+  .describe("Stat to project: pts, reb, ast, fg3m (threes), stl, blk, or pra (points+rebounds+assists)");
+
+const projection = z.object({
+  player: z.string(),
+  team: z.string().nullable(),
+  stat: z.string(),
+  next_game: z
+    .object({
+      game_id: z.number(),
+      date: z.string(),
+      datetime: z.string().nullable(),
+      home: z.boolean(),
+      opponent: z.string(),
+      opponent_name: z.string().nullable(),
+      postseason: z.boolean(),
+      days_rest: z.number().nullable(),
+    })
+    .nullable(),
+  injury: z.object({ status: z.string(), return_date: z.string().nullable(), note: z.string() }).nullable(),
+  likely_out: z.boolean(),
+  projection: z.number().nullable(),
+  range: z.tuple([z.number(), z.number()]).nullable(),
+  components: z.object({
+    last_10_avg: z.number().nullable(),
+    season_avg: z.number().nullable(),
+    season_games: z.number(),
+    vs_opponent_avg: z.number().nullable(),
+    vs_opponent_games: z.number(),
+    opponent_defense_rank: z.number().nullable(),
+    opponent_allowed_factor: z.number().nullable(),
+    venue_avg: z.number().nullable(),
+    back_to_back: z.boolean(),
+  }),
+  recent_games: z.array(z.object({ date: z.string(), opponent: z.string(), value: z.number() })),
+  note: z.string().optional(),
+});
+
+export const predictNextGame = server.tool(
+  {
+    name: "predict_next_game",
+    title: "Predict next game",
+    description:
+      "Project a stat (points by default) for one or two players' NEXT scheduled game and estimate who will produce more. Uses the upcoming schedule, last-10 form, season average, history vs that opponent, the opponent's defense (stat allowed per game), home/away and rest, plus the injury report. Answers questions like 'who will score more in their next game, LeBron or Steph?'. Renders a projection card. Statistical estimate for fun, not betting advice.",
+    inputSchema: z.object({
+      player_a: playerArg("First"),
+      player_b: playerArg("Second").optional(),
+      stat: projStat,
+    }),
+    outputSchema: z.object({
+      stat: z.string(),
+      a: projection,
+      b: projection.nullable(),
+      probability_a_higher: z.number().nullable().describe("Estimated probability player A out-produces player B"),
+      method: z.string(),
+    }),
+    view: {
+      name: "next-game-prediction",
+      description: "Next-game projection card",
+      prefersBorder: false,
+      csp: { resourceDomains: ["https://fonts.googleapis.com", "https://fonts.gstatic.com"] },
+    },
+    annotations: readOnly,
+  },
+  async ({ player_a, player_b, stat }) => {
+    try {
+      const players = await Promise.all([player_a, player_b].filter(Boolean).map((p) => resolvePlayer(p!)));
+      const [a, b] = await Promise.all(players.map((p) => projectNextGame(p, stat)));
+      const prob = b && !a.likely_out && !b.likely_out ? probabilityAOverB(a, b) : null;
+      const data = {
+        stat,
+        a,
+        b: b ?? null,
+        probability_a_higher: prob,
+        method:
+          "projection = (45% last-10 avg + 55% season avg, early-season shrunk toward last season) blended with up to 20% history vs opponent, × half the opponent's allowed-vs-league factor, × half the home/away split, × 0.97 on a back-to-back. Range ≈ ±1 standard deviation of recent games.",
+      };
+      const line = (x: typeof a) => {
+        if (!x.next_game) return `${x.player}: ${x.note ?? "no upcoming game"}`;
+        const game = `${x.next_game.home ? "vs" : "@"} ${x.next_game.opponent} on ${x.next_game.date}`;
+        if (x.likely_out) return `${x.player}: listed ${x.injury?.status} for next game ${game} (projection if they play: ${x.projection ?? "n/a"} ${stat})`;
+        return `${x.player}: ${x.projection ?? "n/a"} ${stat} projected ${game}${x.injury ? ` (injury report: ${x.injury.status})` : ""}`;
+      };
+      const summary = [line(a), b ? line(b) : null, prob != null ? `P(${a.player} higher) ≈ ${Math.round(prob * 100)}%` : null]
+        .filter(Boolean)
+        .join("\n");
+      return { content: [{ type: "text", text: `${summary}\n\n${JSON.stringify(data)}` }], structuredContent: data };
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+export const upcomingScheduleTool = server.tool(
+  {
+    name: "upcoming_schedule",
+    title: "Upcoming schedule",
+    description:
+      "A player's next N games with opponent, home/away, the player's historical averages vs each opponent, and each opponent's defensive rank for points (1 = allows the fewest). Useful for 'what's a good upcoming matchup' questions.",
+    inputSchema: z.object({
+      player: playerArg("The"),
+      games: z.number().int().min(1).max(15).default(5),
+    }),
+    annotations: readOnly,
+  },
+  async ({ player, games }) => {
+    try {
+      const p = await resolvePlayer(player);
+      const team = await currentTeam(p);
+      if (!team) return fail(`Could not determine ${p.full_name}'s current team.`);
+      const [schedule, defense] = await Promise.all([upcomingGames(team, games), defenseTable()]);
+      const rows = await Promise.all(
+        schedule.map(async (g) => {
+          const hist = await gamesVsTeam(p, g.opponent, 4, 20);
+          const avg = (f: string) => (hist.length ? Math.round((hist.reduce((a, x) => a + x[f], 0) / hist.length) * 10) / 10 : null);
+          const d = defense.get(g.opponent);
+          return {
+            ...g,
+            vs_opponent_last_4_seasons: { games: hist.length, pts: avg("pts"), reb: avg("reb"), ast: avg("ast") },
+            opponent_pts_defense_rank: d?.rank.pts ?? null,
+            opponent_pts_allowed_per_game: d?.allowed_per_game.pts ?? null,
+          };
+        }),
+      );
+      return json({ player: p.full_name, team, upcoming: rows });
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+export const playerVsTeamTool = server.tool(
+  {
+    name: "player_vs_team",
+    title: "Player vs team",
+    description: "A player's averages, record, best game and game log against a specific team (box-score window, default last 5 seasons).",
+    inputSchema: z.object({
+      player: playerArg("The"),
+      team: z.string().length(3).describe("Opponent team abbreviation, e.g. BOS, LAL, GSW"),
+      seasons_back: z.number().int().min(1).max(10).default(5),
+      log_games: z.number().int().min(0).max(25).default(5).describe("How many recent games to list"),
+    }),
+    annotations: readOnly,
+  },
+  async ({ player, team, seasons_back, log_games }) => {
+    try {
+      const p = await resolvePlayer(player);
+      return json(await playerVsTeam(p, team, seasons_back, log_games));
     } catch (err) {
       return fail(err);
     }
